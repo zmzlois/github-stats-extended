@@ -22,6 +22,7 @@ const data_langs = {
   data: {
     user: {
       repositories: {
+        pageInfo: { hasNextPage: false, endCursor: null },
         nodes: [
           {
             name: "test-repo-1",
@@ -147,6 +148,69 @@ describe("FetchTopLanguages", () => {
         size: 2,
       },
     });
+  });
+
+  it("includes later pages and applies exclusions across pages", async () => {
+    const firstPage = nock("https://api.github.com")
+      .post(
+        "/graphql",
+        (body: { variables: { cursor: string | null } }) =>
+          body.variables.cursor === null,
+      )
+      .reply(200, {
+        data: {
+          user: {
+            repositories: {
+              nodes: [data_langs.data.user.repositories.nodes[0]],
+              pageInfo: { hasNextPage: true, endCursor: "next-page" },
+            },
+          },
+        },
+      });
+    const lastPage = nock("https://api.github.com")
+      .post(
+        "/graphql",
+        (body: { variables: { cursor: string | null } }) =>
+          body.variables.cursor === "next-page",
+      )
+      .reply(200, {
+        data: {
+          user: {
+            repositories: {
+              nodes: data_langs.data.user.repositories.nodes.slice(1),
+              pageInfo: { hasNextPage: false, endCursor: "last-page" },
+            },
+          },
+        },
+      });
+
+    const languages = await fetchTopLanguages("anuraghazra", ["test-repo-1"]);
+
+    expect(languages["HTML"]?.size).toBe(100);
+    expect(languages["javascript"]?.size).toBe(200);
+    expect(firstPage.isDone()).toBe(true);
+    expect(lastPage.isDone()).toBe(true);
+  });
+
+  it("rejects errors on later pages instead of returning partial totals", async () => {
+    nock("https://api.github.com")
+      .post("/graphql")
+      .reply(200, {
+        data: {
+          user: {
+            repositories: {
+              nodes: [],
+              pageInfo: { hasNextPage: true, endCursor: "next-page" },
+            },
+          },
+        },
+      })
+      .post("/graphql")
+      .reply(200, { errors: [{ message: "page failed" }] });
+
+    await expect(fetchTopLanguages("anuraghazra")).rejects.toThrow(
+      "page failed",
+    );
   });
 
   it("should throw specific error when user not found", async () => {

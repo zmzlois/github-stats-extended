@@ -115,6 +115,7 @@ export const data_langs = {
   data: {
     user: {
       repositories: {
+        pageInfo: { hasNextPage: false, endCursor: null },
         nodes: [
           {
             name: "repo-html",

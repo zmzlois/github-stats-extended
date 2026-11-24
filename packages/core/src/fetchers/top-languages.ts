@@ -39,35 +39,46 @@ const fetchTopLanguages = async (
   }
   const affiliations = parseOwnerAffiliations(ownerAffiliations);
 
-  const res = await retryer(
-    fetcher,
-    {
-      login: username,
-      ownerAffiliations: affiliations,
-    },
-    pat,
-  );
+  const repositories: Array<TopLanguagesRepositoryFragment | null> = [];
+  let cursor: string | null = null;
 
-  if (res.data.errors) {
-    logger.error(res.data.errors);
-    const firstError = res.data.errors[0];
-    if (firstError?.type === "NOT_FOUND") {
-      throw new CustomError(
-        firstError.message || "Could not fetch user.",
-        CustomError.USER_NOT_FOUND,
-      );
-    }
-    if (firstError?.message) {
-      throw new CustomError(
-        wrapTextMultiline(firstError.message, 525, 12)[0] ?? "",
-        res.statusText,
-      );
-    }
-    throw new CustomError(
-      "Something went wrong while trying to retrieve the language data using the GraphQL API.",
-      CustomError.GRAPHQL_ERROR,
+  // fetch every page so older repositories do not crowd out newer work.
+  do {
+    const res: Awaited<ReturnType<typeof fetcher>> = await retryer(
+      fetcher,
+      {
+        login: username,
+        cursor,
+        ownerAffiliations: affiliations,
+      },
+      pat,
     );
-  }
+
+    if (res.data.errors) {
+      logger.error(res.data.errors);
+      const firstError = res.data.errors[0];
+      if (firstError?.type === "NOT_FOUND") {
+        throw new CustomError(
+          firstError.message || "Could not fetch user.",
+          CustomError.USER_NOT_FOUND,
+        );
+      }
+      if (firstError?.message) {
+        throw new CustomError(
+          wrapTextMultiline(firstError.message, 525, 12)[0] ?? "",
+          res.statusText,
+        );
+      }
+      throw new CustomError(
+        "Something went wrong while trying to retrieve the language data using the GraphQL API.",
+        CustomError.GRAPHQL_ERROR,
+      );
+    }
+
+    const page = res.data.data.user?.repositories;
+    repositories.push(...(page?.nodes ?? []));
+    cursor = page?.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
 
   const repoToHide: Record<string, boolean> = {};
   const allExcludedRepos = [
@@ -81,7 +92,7 @@ const fetchTopLanguages = async (
   });
 
   // filter out repositories to be hidden
-  const repoNodes = (res.data.data.user?.repositories.nodes ?? []).filter(
+  const repoNodes = repositories.filter(
     (node): node is TopLanguagesRepositoryFragment =>
       !!node && !repoToHide[node.name],
   );
